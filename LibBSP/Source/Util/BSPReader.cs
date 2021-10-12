@@ -10,7 +10,8 @@ namespace LibBSP {
 	/// </summary>
 	public class BSPReader {
 
-		private FileInfo bspFile;
+		private Func<string, Stream> onGetStream;
+		private BSPFileInfo bspFile;
 		private Dictionary<int, LumpInfo> lumpFiles = null;
 
 		private bool _bigEndian = false;
@@ -33,7 +34,38 @@ namespace LibBSP {
 			if (!File.Exists(file.FullName)) {
 				throw new FileNotFoundException("Unable to open BSP file; file " + file.FullName + " not found.");
 			} else {
-				bspFile = file;
+				bspFile = new BSPFileInfo 
+				{ 
+					Name = file.Name,
+					FullName = file.FullName,
+					Directory = file.Directory.Name,
+					Length = file.Length
+				};
+				onGetStream = ( f ) => new FileStream( f, FileMode.Open, FileAccess.Read );
+			}
+		}
+
+		/// <summary>
+		/// Creates a new instance of a <see cref="BSPReader"/> class to read the specified file.
+		/// </summary>
+		/// <param name="file">The <c>FileInfo</c> representing the file this <see cref="BSPReader"/> should read.</param>
+		public BSPReader( Func<string, Stream> getStream, string file, long length )
+		{
+			if ( onGetStream == null )
+			{
+				throw new ArgumentNullException( "Unable to open BSP file; stream func is null." );
+			}
+			else
+			{
+				bspFile = new BSPFileInfo
+				{
+					Name = Path.GetFileName( file ),
+					FullName = file,
+					Directory = Path.GetDirectoryName( file ),
+					Length = length
+				};
+
+				onGetStream = getStream;
 			}
 		}
 
@@ -48,6 +80,9 @@ namespace LibBSP {
 			if (index < 0 || index >= BSP.GetNumLumps(version)) {
 				throw new IndexOutOfRangeException();
 			}
+
+			if ( onGetStream is null )
+				throw new NullReferenceException( "No stream getter for BSP." );
 
 			switch (version) {
 				case MapType.Quake:
@@ -97,7 +132,7 @@ namespace LibBSP {
 					return GetLumpInfoAtOffset((16 * (index + 1)), version);
 				}
 				case MapType.CoD4: {
-					using (FileStream stream = new FileStream(bspFile.FullName, FileMode.Open, FileAccess.Read)) {
+					using (Stream stream = onGetStream( bspFile.FullName ) ) {
 						BinaryReader binaryReader = new BinaryReader(stream);
 						stream.Seek(8, SeekOrigin.Begin);
 						int numlumps = binaryReader.ReadInt32();
@@ -136,7 +171,7 @@ namespace LibBSP {
 				return default(LumpInfo);
 			}
 			byte[] input;
-			using (FileStream stream = new FileStream(bspFile.FullName, FileMode.Open, FileAccess.Read)) {
+			using (Stream stream = onGetStream( bspFile.FullName ) ) {
 				BinaryReader binaryReader = new BinaryReader(stream);
 				stream.Seek(offset, SeekOrigin.Begin);
 				input = binaryReader.ReadBytes(16);
@@ -234,7 +269,7 @@ namespace LibBSP {
 			if (string.IsNullOrEmpty(fileName)) {
 				fileName = bspFile.FullName;
 			}
-			using (FileStream stream = new FileStream(fileName, FileMode.Open, FileAccess.Read)) {
+			using (Stream stream = onGetStream( bspFile.FullName ) ) {
 				BinaryReader binaryReader = new BinaryReader(stream);
 				stream.Seek(offset, SeekOrigin.Begin);
 				output = binaryReader.ReadBytes(length);
@@ -249,32 +284,43 @@ namespace LibBSP {
 		private void LoadLumpFiles() {
 			lumpFiles = new Dictionary<int, LumpInfo>();
 			// Scan the BSP's directory for lump files
-			DirectoryInfo dir = bspFile.Directory;
-			List<FileInfo> files = dir.GetFiles(bspFile.Name.Substring(0, bspFile.Name.Length - 4) + "_?_*.lmp").ToList();
+			var dir = bspFile.Directory;
+			var files = Directory.GetFiles(dir,bspFile.Name.Substring(0, bspFile.Name.Length - 4) + "_?_*.lmp").ToList();
 			// Sort the list by the number on the file
 			files.Sort((f1, f2) => {
 				int startIndex = bspFile.Name.Length - 1;
-				int f1EndIndex = f1.Name.LastIndexOf('.');
-				int f2EndIndex = f2.Name.LastIndexOf('.');
-				int f1Position = int.Parse(f1.Name.Substring(startIndex, f1EndIndex - startIndex));
-				int f2Position = int.Parse(f2.Name.Substring(startIndex, f2EndIndex - startIndex));
+				var f1Name = Path.GetFileName( f1 );
+				var f2Name = Path.GetFileName( f2 );
+				int f1EndIndex = f1Name.LastIndexOf('.');
+				int f2EndIndex = f2Name.LastIndexOf('.');
+				int f1Position = int.Parse(f1Name.Substring(startIndex, f1EndIndex - startIndex));
+				int f2Position = int.Parse(f2Name.Substring(startIndex, f2EndIndex - startIndex));
 				return f1Position - f2Position;
 			});
 			// Read the files in order. The last file in the list for a specific lump will replace that lump.
-			foreach (FileInfo file in files) {
-				using (FileStream fs = new FileStream(file.FullName, FileMode.Open, FileAccess.Read)) {
-					BinaryReader br = new BinaryReader(fs);
-					fs.Seek(0, SeekOrigin.Begin);
-					byte[] input = br.ReadBytes(20);
-					int offset = BitConverter.ToInt32(input, 0);
-					int lumpIndex = BitConverter.ToInt32(input, 4);
-					int version = BitConverter.ToInt32(input, 8);
-					int length = BitConverter.ToInt32(input, 12);
-					lumpFiles[lumpIndex] = new LumpInfo() {
+			foreach (var file in files) {
+				using ( Stream fs = new FileStream( file, FileMode.Open, FileAccess.Read ) )
+				{
+					BinaryReader br = new BinaryReader( fs );
+					fs.Seek( 0, SeekOrigin.Begin );
+					byte[] input = br.ReadBytes( 20 );
+					int offset = BitConverter.ToInt32( input, 0 );
+					int lumpIndex = BitConverter.ToInt32( input, 4 );
+					int version = BitConverter.ToInt32( input, 8 );
+					int length = BitConverter.ToInt32( input, 12 );
+					var fileInfo = new FileInfo( file );
+					lumpFiles[lumpIndex] = new LumpInfo()
+					{
 						offset = offset,
 						version = version,
 						length = length,
-						lumpFile = file
+						lumpFile = new BSPFileInfo
+						{
+							Name = fileInfo.Name,
+							FullName = fileInfo.FullName,
+							Directory = fileInfo.Directory.Name,
+							Length = fileInfo.Length
+						}
 					};
 					br.Close();
 				}

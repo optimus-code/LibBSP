@@ -69,7 +69,7 @@ namespace LibBSP {
 		public int version;
 		public int offset;
 		public int length;
-		public FileInfo lumpFile;
+		public BSPFileInfo lumpFile;
 	}
 
 	/// <summary>
@@ -780,6 +780,28 @@ namespace LibBSP {
 		public BSP(FileInfo file) : base(16) {
 			reader = new BSPReader(file);
 			filePath = file.FullName;
+		}
+
+		/// <summary>
+		/// Creates a new <see cref="BSP"/> instance using the file referenced by <paramref name="file"/>. The
+		/// <c>List</c>s in this class will be read and populated when accessed through their properties.
+		/// </summary>
+		/// <param name="file">A reference to the .BSP file.</param>
+		public BSP( String fileName, Byte[] fileBuffer ) : base( 16 )
+		{
+			reader = new BSPReader( ( f ) => new MemoryStream( fileBuffer ), fileName, fileBuffer.Length );
+			filePath = fileName;
+		}
+
+		/// <summary>
+		/// Creates a new <see cref="BSP"/> instance using the file referenced by <paramref name="file"/>. The
+		/// <c>List</c>s in this class will be read and populated when accessed through their properties.
+		/// </summary>
+		/// <param name="file">A reference to the .BSP file.</param>
+		public BSP( String fileName, Func<string, Stream> getStream, long length ) : base( 16 )
+		{
+			reader = new BSPReader( ( f ) => getStream( f ), fileName, length );
+			filePath = fileName;
 		}
 
 		/// <summary>
